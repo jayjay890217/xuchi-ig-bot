@@ -444,6 +444,7 @@ def webhook():
         log.warning("簽章不符，拒絕")
         abort(403)
     body = json.loads(raw or b"{}")
+    log.info("webhook 內容：%s", raw[:1500].decode("utf-8", "replace"))
     threading.Thread(target=process, args=(body,), daemon=True).start()
     return "ok"
 
