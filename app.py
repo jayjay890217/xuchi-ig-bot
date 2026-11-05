@@ -49,18 +49,52 @@ CLAIM_WORDS = {"領取", "领取", "我追蹤好了", "追蹤好了", "已追蹤
 
 
 # ---------- 存取 token ----------
+# IGAA 開頭＝Instagram 權杖（graph.instagram.com）；EAA 開頭＝Facebook 權杖（graph.facebook.com，
+# 要先換成粉絲專頁權杖，私訊改用 /{粉專ID}/messages）
+FB_MODE = _token["value"].startswith("EAA")
+if FB_MODE:
+    GRAPH = "https://graph.facebook.com/v23.0"
+_fb = {}
+
+
+def fb_setup():
+    """用 Facebook 權杖找出連著旭馳 IG 的粉絲專頁，取得粉專權杖。"""
+    if _fb.get("page_token"):
+        return _fb
+    raw = _token["value"]
+    q = {"access_token": raw, "fields": "id,name,access_token,instagram_business_account{id,username}"}
+    data = requests.get(f"{GRAPH}/me/accounts", params=q, timeout=15).json()
+    for page in data.get("data", []):
+        iba = page.get("instagram_business_account")
+        if iba:
+            _fb.update(page_id=page["id"], page_name=page.get("name"), page_token=page.get("access_token") or raw,
+                       ig_id=iba["id"], ig_username=iba.get("username"))
+            return _fb
+    q["fields"] = "id,name,instagram_business_account{id,username}"
+    me = requests.get(f"{GRAPH}/me", params=q, timeout=15).json()
+    iba = me.get("instagram_business_account")
+    if iba:  # 權杖本身就是粉專權杖
+        _fb.update(page_id=me["id"], page_name=me.get("name"), page_token=raw,
+                   ig_id=iba["id"], ig_username=iba.get("username"))
+    else:
+        _fb["error"] = {"accounts": data, "me": me}
+        log.error("找不到連著 IG 的粉專：%s", _fb["error"])
+    return _fb
+
+
 def token():
+    if FB_MODE:
+        return fb_setup().get("page_token") or _token["value"]
     return _token["value"]
 
 
-# IGAA 開頭＝Instagram 權杖（graph.instagram.com）；EAA 開頭＝Facebook 權杖（graph.facebook.com）
-if os.environ.get("IG_TOKEN", "").startswith("EAA"):
-    GRAPH = "https://graph.facebook.com/v23.0"
+def msg_path():
+    return f"{fb_setup().get('page_id')}/messages" if FB_MODE else "me/messages"
 
 
 def refresh_token_if_needed():
     """Instagram 長期 token 60 天會過期；每 7 天換新一次。"""
-    if not token() or time.time() - _token["refreshed"] < 7 * 86400:
+    if FB_MODE or not token() or time.time() - _token["refreshed"] < 7 * 86400:
         return
     try:
         r = requests.get(f"{GRAPH.rsplit('/', 1)[0]}/refresh_access_token",
@@ -176,6 +210,8 @@ def button_message(text, btn_title, payload):
 
 
 def biz_username():
+    if FB_MODE:
+        return fb_setup().get("ig_username") or "旭馳"
     if not hasattr(biz_username, "v"):
         biz_username.v = graph_get("me", fields="username").get("username", "旭馳")
     return biz_username.v
@@ -185,9 +221,9 @@ def send_gift(user_id, rule):
     text = rule.get("送的文字") or f"這是你的【{rule.get('名稱', '')}】"
     if rule.get("連結"):
         text += f"\n{rule['連結']}"
-    graph_post("me/messages", {"recipient": {"id": user_id}, "message": {"text": text}})
+    graph_post(msg_path(), {"recipient": {"id": user_id}, "message": {"text": text}})
     for url in (rule.get("圖片網址") or "").split():
-        graph_post("me/messages", {"recipient": {"id": user_id},
+        graph_post(msg_path(), {"recipient": {"id": user_id},
                                    "message": {"attachment": {"type": "image", "payload": {"url": url}}}})
     log.info("已送出【%s】給 %s", rule.get("名稱"), user_id)
 
@@ -203,11 +239,11 @@ def handle_comment(biz_id, value):
     name = frm.get("username", "")
     payload = "CLAIM:" + norm(kw)
     title = rule.get("名稱") or kw
-    res = graph_post("me/messages", {"recipient": {"comment_id": value["id"]},
+    res = graph_post(msg_path(), {"recipient": {"comment_id": value["id"]},
                                      "message": button_message(MSG_INVITE.format(name=name, kw=kw, title=title),
                                                                BTN_CLAIM, payload)})
     if "error" in res:
-        res = graph_post("me/messages", {"recipient": {"comment_id": value["id"]},
+        res = graph_post(msg_path(), {"recipient": {"comment_id": value["id"]},
                                          "message": {"text": MSG_INVITE_FALLBACK.format(name=name, kw=kw, title=title)}})
     if "error" not in res:
         _last_rule[frm.get("id")] = norm(kw)
@@ -225,7 +261,7 @@ def handle_claim(user_id, key):
         send_gift(user_id, rule)
     else:
         title = rule.get("名稱") or rule["關鍵字"]
-        graph_post("me/messages", {"recipient": {"id": user_id}, "message": button_message(
+        graph_post(msg_path(), {"recipient": {"id": user_id}, "message": button_message(
             MSG_NEED_FOLLOW.format(biz=biz_username(), title=title), BTN_FOLLOWED, "CLAIM:" + key)})
         log.info("%s 還沒追蹤", prof.get("username", user_id))
 
@@ -272,9 +308,10 @@ def home():
 @app.get("/status")
 def status():
     """檢查連線用：不會顯示任何金鑰。"""
-    me = graph_get("me", fields="id,username,name") if token() else {"error": "沒有 IG_TOKEN"}
-    if "error" in me and isinstance(me["error"], dict):
-        me = {"error": me["error"].get("message")}
+    if FB_MODE:
+        me = {k: v for k, v in fb_setup().items() if k != "page_token"}
+    else:
+        me = graph_get("me", fields="id,username") if token() else {"error": "沒有 IG_TOKEN"}
     return {"graph": GRAPH, "token_type": token()[:3] if token() else "", "app_secret": bool(APP_SECRET),
             "me": me, "rules": len(load_rules())}
 
