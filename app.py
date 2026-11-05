@@ -352,12 +352,50 @@ def poll_once():
             handle_claim(frm["id"], norm(rule["關鍵字"]))
 
 
+# 只處理這個時間之後的新留言（避免把舊留言補發私訊）
+COMMENTS_AFTER = os.environ.get("COMMENTS_AFTER", "2026-11-05T06:00:00+0000")
+_done_comments = set()
+
+
+def poll_comments():
+    if not FB_MODE:
+        return
+    info = fb_setup()
+    biz_id = info.get("ig_id")
+    if not biz_id:
+        return
+    media = graph_get(f"{biz_id}/media", fields="id,timestamp", limit=5)
+    for md in media.get("data", []):
+        cs = graph_get(f"{md['id']}/comments", limit=30,
+                       fields="id,text,timestamp,from,username,replies{username}")
+        if "error" in cs:
+            log.warning("讀留言失敗：%s", cs["error"].get("message"))
+            return
+        for c in cs.get("data", []):
+            if c["id"] in _done_comments or c.get("timestamp", "") < COMMENTS_AFTER:
+                continue
+            _done_comments.add(c["id"])
+            replied = any(r.get("username") == info.get("ig_username")
+                          for r in c.get("replies", {}).get("data", []))
+            if replied:
+                continue
+            frm = c.get("from") or {"username": c.get("username")}
+            handle_comment(biz_id, {"id": c["id"], "text": c.get("text", ""), "from": frm,
+                                    "media": {"id": md["id"]}})
+
+
+_poll_n = {"n": 0}
+
+
 def poll_loop():
     log.info("開始定時查看私訊（每 %s 秒）", POLL_SECONDS)
     while True:
         try:
             with _lock:
                 poll_once()
+                _poll_n["n"] += 1
+                if _poll_n["n"] % 4 == 1:  # 約每分鐘看一次留言
+                    poll_comments()
         except Exception:  # noqa: BLE001
             log.exception("查看私訊失敗")
         time.sleep(POLL_SECONDS)
