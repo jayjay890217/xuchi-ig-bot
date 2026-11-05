@@ -1,6 +1,6 @@
 """本機測試：假裝 Meta 打 webhook，檢查程式會送出什麼（不會真的連 IG）。"""
 import hashlib, hmac, json, os
-os.environ.update(APP_SECRET="s", VERIFY_TOKEN="v", IG_TOKEN="t")
+os.environ.update(APP_SECRET="s", VERIFY_TOKEN="v", IG_TOKEN="t", NO_POLL="1")
 import app as m
 
 sent = []
@@ -45,4 +45,16 @@ m._rules_cache.update(rules=[{"關鍵字": "改裝", "貼文網址或ID": "https
 assert m.match_rule("改裝", "M1") and not m.match_rule("保養", "M1")
 m._shortcode_cache["M2"] = "https://www.instagram.com/p/ZZZ/ ZZZ"
 assert not m.match_rule("改裝", "M2")
+# 4. 定時查看私訊
+m.FB_MODE = True
+m._fb.update(page_id="P", ig_id="BIZ", page_token="t", ig_username="xuchi_test")
+m._rules_cache.update(rules=[{"關鍵字": "保養", "名稱": "旭馳保養價目表", "送的文字": "價目表在這"}], at=9e18)
+conv = {"data": [{"messages": {"data": [
+    {"message": "領取", "from": {"id": "U9", "username": "bob"}},
+    {"message": "嗨 bob！按下面的按鈕就能領取【旭馳保養價目表】", "from": {"id": "BIZ"}}]}}]}
+m.graph_get = lambda path, **p: conv if path.endswith("conversations") else {"is_user_follow_business": True}
+sent.clear(); m.poll_once()
+assert "價目表在這" in json.dumps(sent, ensure_ascii=False), sent
+conv["data"][0]["messages"]["data"].insert(0, {"message": "價目表在這", "from": {"id": "BIZ"}})
+sent.clear(); m.poll_once(); assert not sent  # 已回覆過不重複
 print("全部通過")

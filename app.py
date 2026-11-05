@@ -16,6 +16,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 import time
 
@@ -304,6 +305,59 @@ def process(body):
                     log.exception("處理私訊失敗")
 
 
+# ---------- 定時查看私訊（Meta 沒送私訊通知時的備案） ----------
+POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "15"))
+
+
+def rule_from_thread(msgs, biz_id):
+    """從旭馳先前送出的邀請訊息裡的【名稱】找回是哪一條規則。"""
+    for m in msgs:
+        if m.get("from", {}).get("id") == biz_id:
+            for t in re.findall(r"【(.+?)】", m.get("message") or ""):
+                for rule in load_rules():
+                    if t in ((rule.get("名稱") or ""), rule["關鍵字"]):
+                        return rule
+    return None
+
+
+def poll_once():
+    if not FB_MODE:
+        return
+    info = fb_setup()
+    page_id, biz_id = info.get("page_id"), info.get("ig_id")
+    if not page_id:
+        return
+    data = graph_get(f"{page_id}/conversations", platform="instagram", limit=10,
+                     fields="updated_time,participants,messages.limit(10){message,from,created_time}")
+    for conv in data.get("data", []):
+        msgs = conv.get("messages", {}).get("data", [])  # 新的在前
+        if not msgs:
+            continue
+        last = msgs[0]
+        frm = last.get("from", {})
+        # 只處理「最後一則是客人打的領取」：旭馳一回覆就不會重複處理
+        if frm.get("id") == biz_id or norm(last.get("message")) not in CLAIM_WORDS:
+            continue
+        rule = rule_from_thread(msgs, biz_id)
+        if rule:
+            log.info("查看私訊：%s 要領取【%s】", frm.get("username"), rule.get("名稱"))
+            handle_claim(frm["id"], norm(rule["關鍵字"]))
+
+
+def poll_loop():
+    while True:
+        try:
+            with _lock:
+                poll_once()
+        except Exception:  # noqa: BLE001
+            log.exception("查看私訊失敗")
+        time.sleep(POLL_SECONDS)
+
+
+if os.environ.get("IG_TOKEN") and not os.environ.get("NO_POLL"):
+    threading.Thread(target=poll_loop, daemon=True).start()
+
+
 # ---------- 網址 ----------
 @app.get("/")
 def home():
@@ -319,18 +373,6 @@ def status():
         me = graph_get("me", fields="id,username") if token() else {"error": "沒有 IG_TOKEN"}
     return {"graph": GRAPH, "token_type": token()[:3] if token() else "", "app_secret": bool(APP_SECRET),
             "me": me, "rules": len(load_rules())}
-
-
-@app.get("/debug")
-def debug():
-    """排查用：只做 GET 查詢，要帶 key（=VERIFY_TOKEN）。"""
-    if not VERIFY_TOKEN or request.args.get("key") != VERIFY_TOKEN:
-        abort(403)
-    raw = _token["value"]
-    params = {k: v for k, v in request.args.items() if k not in ("key", "path", "raw", "host")}
-    params["access_token"] = raw if request.args.get("raw") else token()
-    base = "https://graph.instagram.com/v23.0" if request.args.get("host") == "ig" else GRAPH
-    return requests.get(f"{base}/{request.args.get('path', 'me')}", params=params, timeout=15).json()
 
 
 @app.get("/webhook")
