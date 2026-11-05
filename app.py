@@ -53,6 +53,11 @@ def token():
     return _token["value"]
 
 
+# IGAA 開頭＝Instagram 權杖（graph.instagram.com）；EAA 開頭＝Facebook 權杖（graph.facebook.com）
+if os.environ.get("IG_TOKEN", "").startswith("EAA"):
+    GRAPH = "https://graph.facebook.com/v23.0"
+
+
 def refresh_token_if_needed():
     """Instagram 長期 token 60 天會過期；每 7 天換新一次。"""
     if not token() or time.time() - _token["refreshed"] < 7 * 86400:
