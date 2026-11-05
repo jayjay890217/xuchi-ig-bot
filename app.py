@@ -364,7 +364,7 @@ def poll_comments():
     biz_id = info.get("ig_id")
     if not biz_id:
         return
-    media = graph_get(f"{biz_id}/media", fields="id,timestamp", limit=5)
+    media = graph_get(f"{biz_id}/media", fields="id,timestamp", limit=int(os.environ.get("POLL_MEDIA", "25")))
     for md in media.get("data", []):
         cs = graph_get(f"{md['id']}/comments", limit=30,
                        fields="id,text,timestamp,from,username,replies{username}")
@@ -372,9 +372,10 @@ def poll_comments():
             log.warning("讀留言失敗：%s", cs["error"].get("message"))
             return
         if _poll_n["n"] <= 1:
-            log.info("讀留言：貼文 %s（%s）有 %s 則，最新 %s", md["id"], md.get("timestamp"),
-                     len(cs.get("data", [])), [(x.get("username"), (x.get("text") or "")[:10], x.get("timestamp"))
-                                               for x in cs.get("data", [])[:3]])
+            fresh = [(x.get("username"), (x.get("text") or "")[:10], x.get("timestamp"))
+                     for x in cs.get("data", []) if x.get("timestamp", "") >= COMMENTS_AFTER]
+            if fresh:
+                log.info("讀留言：貼文 %s 有新留言 %s", md["id"], fresh)
         for c in cs.get("data", []):
             if c["id"] in _done_comments or c.get("timestamp", "") < COMMENTS_AFTER:
                 continue
