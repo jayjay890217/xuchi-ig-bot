@@ -248,6 +248,7 @@ def handle_comment(biz_id, value):
                                          "message": {"text": MSG_INVITE_FALLBACK.format(name=name, kw=kw, title=title)}})
     if "error" not in res:
         _last_rule[frm.get("id")] = norm(kw)
+        _last_rule["@" + name] = norm(kw)
         graph_post(f"{value['id']}/replies", {"message": MSG_COMMENT_REPLY})
         log.info("留言「%s」→ 私訊 %s", kw, name)
 
@@ -339,12 +340,20 @@ def poll_once():
         if frm.get("id") == biz_id or norm(last.get("message")) not in CLAIM_WORDS:
             continue
         rule = rule_from_thread(msgs, biz_id)
+        if not rule:
+            key = _last_rule.get(frm.get("id")) or _last_rule.get("@" + (frm.get("username") or ""))
+            rule = rule_by_key(key) if key else None
+        if not rule and len(load_rules()) == 1:
+            rule = load_rules()[0]
+        if not rule:
+            log.info("查看私訊：%s 打了領取，但找不到是哪個活動", frm.get("username"))
         if rule:
             log.info("查看私訊：%s 要領取【%s】", frm.get("username"), rule.get("名稱"))
             handle_claim(frm["id"], norm(rule["關鍵字"]))
 
 
 def poll_loop():
+    log.info("開始定時查看私訊（每 %s 秒）", POLL_SECONDS)
     while True:
         try:
             with _lock:
