@@ -295,7 +295,9 @@ def process(body):
                         handle_comment(biz_id, ch.get("value", {}))
                     except Exception:  # noqa: BLE001
                         log.exception("處理留言失敗")
-            for ev in entry.get("messaging", []):
+            if entry.get("standby"):
+                log.info("收到 standby（訊息被其他工具接走）：%s", [list(e) for e in entry["standby"]])
+            for ev in entry.get("messaging", []) + entry.get("standby", []):
                 try:
                     handle_messaging(biz_id, ev)
                 except Exception:  # noqa: BLE001
