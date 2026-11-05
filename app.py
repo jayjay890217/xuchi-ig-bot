@@ -371,6 +371,10 @@ def poll_comments():
         if "error" in cs:
             log.warning("讀留言失敗：%s", cs["error"].get("message"))
             return
+        if _poll_n["n"] <= 1:
+            log.info("讀留言：貼文 %s（%s）有 %s 則，最新 %s", md["id"], md.get("timestamp"),
+                     len(cs.get("data", [])), [(x.get("username"), (x.get("text") or "")[:10], x.get("timestamp"))
+                                               for x in cs.get("data", [])[:3]])
         for c in cs.get("data", []):
             if c["id"] in _done_comments or c.get("timestamp", "") < COMMENTS_AFTER:
                 continue
