@@ -322,9 +322,10 @@ def debug():
     if not VERIFY_TOKEN or request.args.get("key") != VERIFY_TOKEN:
         abort(403)
     raw = _token["value"]
-    params = {k: v for k, v in request.args.items() if k not in ("key", "path", "raw")}
+    params = {k: v for k, v in request.args.items() if k not in ("key", "path", "raw", "host")}
     params["access_token"] = raw if request.args.get("raw") else token()
-    return requests.get(f"{GRAPH}/{request.args.get('path', 'me')}", params=params, timeout=15).json()
+    base = "https://graph.instagram.com/v23.0" if request.args.get("host") == "ig" else GRAPH
+    return requests.get(f"{base}/{request.args.get('path', 'me')}", params=params, timeout=15).json()
 
 
 @app.get("/webhook")
