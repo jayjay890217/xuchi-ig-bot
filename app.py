@@ -269,6 +269,16 @@ def home():
     return f"旭馳 IG 機器人運作中（規則 {len(load_rules())} 條）"
 
 
+@app.get("/status")
+def status():
+    """檢查連線用：不會顯示任何金鑰。"""
+    me = graph_get("me", fields="id,username,name") if token() else {"error": "沒有 IG_TOKEN"}
+    if "error" in me and isinstance(me["error"], dict):
+        me = {"error": me["error"].get("message")}
+    return {"graph": GRAPH, "token_type": token()[:3] if token() else "", "app_secret": bool(APP_SECRET),
+            "me": me, "rules": len(load_rules())}
+
+
 @app.get("/webhook")
 def verify():
     if request.args.get("hub.mode") == "subscribe" and VERIFY_TOKEN and \
