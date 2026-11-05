@@ -286,6 +286,9 @@ def process(body):
         refresh_token_if_needed()
         for entry in body.get("entry", []):
             biz_id = entry.get("id")
+            kinds = [c.get("field") for c in entry.get("changes", [])] +                 [",".join(k for k in ev if k not in ("sender", "recipient", "timestamp")) +
+                 ("(echo)" if ev.get("message", {}).get("is_echo") else "") for ev in entry.get("messaging", [])]
+            log.info("收到通知 object=%s 種類=%s", body.get("object"), kinds)
             for ch in entry.get("changes", []):
                 if ch.get("field") == "comments":
                     try:
