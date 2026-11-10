@@ -131,12 +131,28 @@ def graph_get(path, **params):
     return r.json()
 
 
+_recent = []  # 最近動作（/status 會顯示，不含權杖）
+
+
+def note(msg):
+    log.info(msg)
+    _recent.append(time.strftime("%m-%d %H:%M:%S ") + msg)
+    del _recent[:-30]
+
+
 def graph_post(path, payload):
-    r = requests.post(f"{GRAPH}/{path}", json=payload,
-                      headers={"Authorization": f"Bearer {token()}"}, timeout=15)
-    data = r.json()
+    note(f"呼叫 Meta：{path}")
+    try:
+        r = requests.post(f"{GRAPH}/{path}", json=payload,
+                          headers={"Authorization": f"Bearer {token()}"}, timeout=15)
+        data = r.json()
+    except Exception as e:  # noqa: BLE001
+        note(f"呼叫失敗 {path}：{type(e).__name__} {e}")
+        return {"error": {"message": str(e)}}
     if "error" in data:
-        log.warning("Graph 錯誤 %s：%s", path, data["error"].get("message"))
+        note(f"Meta 回錯誤 {path}：{data['error'].get('message')}（code {data['error'].get('code')}/{data['error'].get('error_subcode')}）")
+    else:
+        note(f"Meta 成功 {path}")
     return data
 
 
@@ -238,6 +254,7 @@ def handle_comment(biz_id, value):
     if frm.get("id") == biz_id or value.get("parent_id"):
         return  # 自己的留言、或回覆別人的留言，不處理
     rule = match_rule(value.get("text", ""), value.get("media", {}).get("id", ""))
+    note(f"留言 {frm.get('username')}：{value.get('text','')[:20]} → {'對到【' + rule.get('名稱','') + '】' if rule else '沒有對到關鍵字'}")
     if not rule:
         return
     kw = rule["關鍵字"]
@@ -428,7 +445,7 @@ def status():
     else:
         me = graph_get("me", fields="id,username") if token() else {"error": "沒有 IG_TOKEN"}
     return {"graph": GRAPH, "token_type": token()[:3] if token() else "", "app_secret": bool(APP_SECRET),
-            "me": me, "rules": len(load_rules())}
+            "me": me, "rules": len(load_rules()), "recent": _recent[-15:]}
 
 
 @app.get("/webhook")
