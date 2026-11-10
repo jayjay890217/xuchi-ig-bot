@@ -38,6 +38,7 @@ _token = {"value": os.environ.get("IG_TOKEN", ""), "refreshed": 0}
 _rules_cache = {"rules": [], "at": 0}
 _last_rule = {}   # 客人 id → 上次留言對到的規則（客人打字「領取」時用）
 _lock = threading.Lock()
+_done_once = set()  # 已處理過的留言 id
 
 # ---------- 文字（要改語氣改這裡） ----------
 MSG_INVITE = "嗨 {name}！謝謝你留言「{kw}」🙌\n按下面的按鈕就能領取【{title}】"
@@ -230,6 +231,9 @@ def send_gift(user_id, rule):
 
 
 def handle_comment(biz_id, value):
+    if value.get("id") in _done_once:
+        return
+    _done_once.add(value.get("id"))
     frm = value.get("from", {})
     if frm.get("id") == biz_id or value.get("parent_id"):
         return  # 自己的留言、或回覆別人的留言，不處理
@@ -284,7 +288,7 @@ def handle_messaging(biz_id, ev):
 
 
 def process(body):
-    with _lock:
+    if True:  # 不等定時查看的鎖，留言一來就處理
         refresh_token_if_needed()
         for entry in body.get("entry", []):
             biz_id = entry.get("id")
@@ -398,9 +402,9 @@ def poll_loop():
         try:
             with _lock:
                 poll_once()
-                _poll_n["n"] += 1
-                if _poll_n["n"] % 4 == 1:  # 約每分鐘看一次留言
-                    poll_comments()
+            _poll_n["n"] += 1
+            if _poll_n["n"] % 4 == 1:  # 約每分鐘看一次留言（不佔鎖）
+                poll_comments()
         except Exception:  # noqa: BLE001
             log.exception("查看私訊失敗")
         time.sleep(POLL_SECONDS)
